@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Task, TaskStatus, UserStats, User } from './types';
 import { generateRoutineTasks, generateSingleTask } from './services/geminiService';
 import { StarSystem } from './components/StarSystem';
@@ -7,6 +7,7 @@ import { StarBackground } from './components/StarBackground';
 import { Navbar, ScreenID } from './components/Navbar';
 import { AuthScreen } from './components/AuthScreen';
 import { OnboardingScreen } from './components/OnboardingScreen';
+import { supabase } from './services/supabase';
 
 const HOUR_IN_MS = 60 * 60 * 1000;
 const TWELVE_HOURS_MS = 12 * HOUR_IN_MS;
@@ -54,10 +55,10 @@ const RechargeWidget = ({ title, value, max, colorClass, labels, icon: Icon }: {
 };
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('thed_active_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [session, setSession] = useState<any>(null);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [isAppReady, setIsAppReady] = useState(false);
 
   const [activeScreen, setActiveScreen] = useState<ScreenID>('home');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -77,89 +78,177 @@ const App: React.FC = () => {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isDailyToggle, setIsDailyToggle] = useState(false);
 
-  // Load user-specific data
-  useEffect(() => {
-    if (currentUser) {
-      const storageKey = `thed_data_${currentUser.email}`;
-      const savedData = localStorage.getItem(storageKey);
-      if (savedData) {
-        const parsed = JSON.parse(savedData);
-        setTasks(parsed.tasks || []);
-        setStats(parsed.stats || {
-          stars: 0, 
-          streak: 0,
-          totalStars: 0,
-          completedToday: 0,
-          currentDayTimestamp: new Date().setHours(0, 0, 0, 0),
-          lastCycleTimestamp: 0,
-          thresholds: generateRandomThresholds()
+  const handleSessionUser = useCallback(async (user: any) => {
+    setDbError(null);
+    try {
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      // PGRST116 means no row found, which is expected for new users
+      if (profileError && profileError.code !== 'PGRST116') {
+        setDbError(`DB Protocol Failure: ${profileError.message}`);
+        return;
+      }
+
+      const userData: User = {
+        email: user.email!,
+        id: user.id,
+        lastLogin: Date.now(),
+        hasOnboarded: !!profile?.has_onboarded,
+        name: profile?.name,
+        profiles: profile?.profiles_list
+      };
+      
+      setCurrentUser(userData);
+
+      if (profile) {
+        setStats({
+          stars: profile.stars || 0,
+          streak: profile.streak || 0,
+          totalStars: profile.total_stars || 0,
+          completedToday: profile.completed_today || 0,
+          currentDayTimestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
+          lastCycleTimestamp: profile.last_cycle_timestamp || 0,
+          thresholds: profile.thresholds || generateRandomThresholds()
         });
       }
-    }
-  }, [currentUser]);
 
-  // Save user-specific data
-  useEffect(() => {
-    if (currentUser) {
-      const storageKey = `thed_data_${currentUser.email}`;
-      localStorage.setItem(storageKey, JSON.stringify({ tasks, stats }));
-      localStorage.setItem('thed_active_user', JSON.stringify(currentUser));
+      const { data: userTasks, error: taskError } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (taskError) {
+        console.warn("Task recovery skipped:", taskError.message);
+      } else if (userTasks) {
+        setTasks(userTasks.map((t: any) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          timeSlot: t.time_slot,
+          status: t.status,
+          isRoutine: t.is_routine,
+          isPersonal: t.is_personal,
+          isDaily: t.is_daily,
+          createdAt: new Date(t.created_at).getTime(),
+          unlockAt: t.unlock_at ? new Date(t.unlock_at).getTime() : undefined
+        })));
+      }
+      setIsAppReady(true);
+    } catch (e: any) {
+      setDbError(`Critical System Exception: ${e.message}`);
     }
-  }, [tasks, stats, currentUser]);
+  }, []);
+
+  useEffect(() => {
+    const initSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setSession(session);
+      if (session?.user) await handleSessionUser(session.user);
+      else setIsAppReady(true);
+    };
+
+    initSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session?.user) handleSessionUser(session.user);
+      else {
+        setCurrentUser(null);
+        setIsAppReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [handleSessionUser]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Day rollover logic
   useEffect(() => {
+    if (!currentUser || !isAppReady) return;
     const today = new Date().setHours(0, 0, 0, 0);
-    if (stats.currentDayTimestamp !== today) {
-      setTasks(prev => {
-        return prev.map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
-                  .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
+    if (stats.currentDayTimestamp !== today && stats.currentDayTimestamp !== 0) {
+      const resetTasks = async () => {
+        try {
+          const updatedTasks = tasks.map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
+                               .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
+          
+          await supabase.from('tasks').delete().eq('user_id', currentUser.id).neq('is_daily', true).eq('status', TaskStatus.COMPLETED);
+          await supabase.from('tasks').update({ status: TaskStatus.PENDING }).eq('user_id', currentUser.id).eq('is_daily', true);
+
+          setTasks(updatedTasks);
+          const newStats = {
+            ...stats,
+            completedToday: 0,
+            currentDayTimestamp: today,
+            thresholds: generateRandomThresholds(),
+            streak: stats.completedToday > 0 ? stats.streak + 1 : 0
+          };
+          setStats(newStats);
+          syncStats(newStats);
+        } catch (e) {
+          console.error("Rollover failure:", e);
+        }
+      };
+      resetTasks();
+    }
+  }, [stats.currentDayTimestamp, currentUser, isAppReady, tasks, stats]);
+
+  const syncStats = async (s: UserStats) => {
+    if (!currentUser) return;
+    try {
+      await supabase.from('profiles').upsert({
+        id: currentUser.id,
+        stars: s.stars,
+        streak: s.streak,
+        total_stars: s.totalStars,
+        completed_today: s.completedToday,
+        current_day_timestamp: s.currentDayTimestamp,
+        last_cycle_timestamp: s.lastCycleTimestamp,
+        thresholds: s.thresholds
       });
-      setStats(prev => ({
-        ...prev,
-        completedToday: 0,
-        currentDayTimestamp: today,
-        thresholds: generateRandomThresholds(),
-        streak: prev.completedToday > 0 ? prev.streak + 1 : 0
-      }));
+    } catch (e) {
+      console.error("Sync failure:", e);
     }
-  }, [stats.currentDayTimestamp]);
-
-  const handleLogin = (email: string) => {
-    // Check if this is a known user to determine onboarding status
-    const storageKey = `thed_data_${email}`;
-    const existingData = localStorage.getItem(storageKey);
-    const parsed = existingData ? JSON.parse(existingData) : null;
-    
-    setCurrentUser({
-      email,
-      id: btoa(email),
-      lastLogin: Date.now(),
-      hasOnboarded: parsed?.user?.hasOnboarded || false,
-      name: parsed?.user?.name,
-      profiles: parsed?.user?.profiles
-    });
   };
 
-  const handleOnboardingComplete = (name: string, profiles: string[]) => {
+  const handleOnboardingComplete = async (name: string, profiles: string[]) => {
     if (currentUser) {
-      const updatedUser = { ...currentUser, name, profiles, hasOnboarded: true };
-      setCurrentUser(updatedUser);
-      // Explicitly trigger a save of the user metadata
-      const storageKey = `thed_data_${currentUser.email}`;
-      const currentStorage = JSON.parse(localStorage.getItem(storageKey) || '{"tasks":[], "stats":{}}');
-      localStorage.setItem(storageKey, JSON.stringify({ ...currentStorage, user: updatedUser }));
+      setIsLoading(true);
+      try {
+        const { error } = await supabase.from('profiles').upsert({
+          id: currentUser.id,
+          name,
+          profiles_list: profiles,
+          has_onboarded: true,
+          current_day_timestamp: new Date().setHours(0, 0, 0, 0)
+        });
+        if (!error) {
+          setCurrentUser({ ...currentUser, name, profiles, hasOnboarded: true });
+        } else {
+          setDbError(`Identity Sync Failed: ${error.message}`);
+        }
+      } catch (e: any) {
+        setDbError(e.message);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('thed_active_user');
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setCurrentUser(null);
+    setSession(null);
     setActiveScreen('home');
+    setDbError(null);
   };
 
   const cycleTimeLeft = Math.max(0, (stats.lastCycleTimestamp + TWELVE_HOURS_MS) - currentTime);
@@ -184,7 +273,7 @@ const App: React.FC = () => {
   };
 
   const start12HourCycle = async () => {
-    if (isCycleLocked) return;
+    if (isCycleLocked || !currentUser) return;
     await simulateLoading(async () => {
       try {
         const routineData = await generateRoutineTasks();
@@ -201,13 +290,34 @@ const App: React.FC = () => {
           createdAt: Date.now(),
           unlockAt: startTime + index * HOUR_IN_MS
         }));
+
+        const dbTasks = newRoutineTasks.map(t => ({
+          user_id: currentUser.id,
+          title: t.title,
+          description: t.description,
+          time_slot: t.timeSlot,
+          status: t.status,
+          is_routine: t.isRoutine,
+          is_personal: t.isPersonal,
+          is_daily: t.isDaily,
+          unlock_at: t.unlockAt ? new Date(t.unlockAt).toISOString() : null
+        }));
+        
+        const { error } = await supabase.from('tasks').insert(dbTasks);
+        if (error) throw error;
+
         setTasks(prev => [...prev.filter(t => !t.isRoutine), ...newRoutineTasks]);
-        setStats(prev => ({ ...prev, lastCycleTimestamp: startTime }));
-      } catch (e) { console.error(e); }
+        const updatedStats = { ...stats, lastCycleTimestamp: startTime };
+        setStats(updatedStats);
+        syncStats(updatedStats);
+      } catch (e: any) { 
+        setDbError(`Cycle Initiation Failed: ${e.message}`);
+      }
     });
   };
 
   const handleAIBoost = async () => {
+    if (!currentUser) return;
     await simulateLoading(async () => {
       try {
         const data = await generateSingleTask();
@@ -222,44 +332,96 @@ const App: React.FC = () => {
           isDaily: false,
           createdAt: Date.now()
         };
+
+        const { error } = await supabase.from('tasks').insert({
+          user_id: currentUser.id,
+          title: task.title,
+          description: task.description,
+          time_slot: task.timeSlot,
+          status: task.status,
+          is_routine: task.isRoutine,
+          is_personal: task.isPersonal,
+          is_daily: task.isDaily
+        });
+        if (error) throw error;
+
         setTasks(prev => [task, ...prev]);
-      } catch (e) {
-        console.error("AI Boost failed", e);
+      } catch (e: any) { 
+        setDbError(`AI Boost Offline: ${e.message}`);
       }
     });
   };
 
-  const addManualTask = () => {
-    if (!newTaskTitle.trim()) return;
-    const task: Task = {
-      id: `manual-${Date.now()}`,
-      title: newTaskTitle,
-      description: isDailyToggle ? 'Daily Routine' : 'One-time Objective',
-      timeSlot: 'Now',
-      status: TaskStatus.PENDING,
-      isRoutine: false,
-      isPersonal: true,
-      isDaily: isDailyToggle,
-      createdAt: Date.now()
-    };
-    setTasks([task, ...tasks]);
-    setNewTaskTitle('');
+  const addManualTask = async () => {
+    if (!newTaskTitle.trim() || !currentUser) return;
+    try {
+      const task: Task = {
+        id: `manual-${Date.now()}`,
+        title: newTaskTitle,
+        description: isDailyToggle ? 'Daily Routine' : 'One-time Objective',
+        timeSlot: 'Now',
+        status: TaskStatus.PENDING,
+        isRoutine: false,
+        isPersonal: true,
+        isDaily: isDailyToggle,
+        createdAt: Date.now()
+      };
+
+      const { data, error } = await supabase.from('tasks').insert({
+        user_id: currentUser.id,
+        title: task.title,
+        description: task.description,
+        time_slot: task.timeSlot,
+        status: task.status,
+        is_routine: task.isRoutine,
+        is_personal: task.isPersonal,
+        is_daily: task.isDaily
+      }).select().single();
+
+      if (error) throw error;
+
+      if (data) {
+        setTasks([{ ...task, id: data.id }, ...tasks]);
+        setNewTaskTitle('');
+      }
+    } catch (e: any) {
+      setDbError(`Input Error: ${e.message}`);
+    }
   };
 
-  const toggleTask = (id: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id === id) {
-        if (t.isRoutine && t.unlockAt && currentTime < t.unlockAt - 1000) return t;
-        const completing = t.status !== TaskStatus.COMPLETED;
-        setStats(s => ({ 
-          ...s, 
-          completedToday: completing ? s.completedToday + 1 : Math.max(0, s.completedToday - 1),
-          totalStars: completing ? s.totalStars + 1 : s.totalStars
-        }));
-        return { ...t, status: completing ? TaskStatus.COMPLETED : TaskStatus.PENDING };
-      }
-      return t;
-    }));
+  const toggleTask = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task || !currentUser) return;
+    if (task.isRoutine && task.unlockAt && currentTime < task.unlockAt - 1000) return;
+
+    const newStatus = task.status === TaskStatus.COMPLETED ? TaskStatus.PENDING : TaskStatus.COMPLETED;
+    const completing = newStatus === TaskStatus.COMPLETED;
+
+    try {
+      const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+      if (error) throw error;
+      
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
+      const newStats = { 
+        ...stats, 
+        completedToday: completing ? stats.completedToday + 1 : Math.max(0, stats.completedToday - 1),
+        totalStars: completing ? stats.totalStars + 1 : stats.totalStars
+      };
+      setStats(newStats);
+      syncStats(newStats);
+    } catch (e: any) {
+      setDbError(`Sync Error: ${e.message}`);
+    }
+  };
+
+  const deleteTask = async (id: string) => {
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', id);
+      if (error) throw error;
+      setTasks(tasks.filter(t => t.id !== id));
+    } catch (e: any) {
+      setDbError(`Delete Error: ${e.message}`);
+    }
   };
 
   const sortedTasks = [...tasks].sort((a, b) => {
@@ -269,17 +431,27 @@ const App: React.FC = () => {
     return (a.unlockAt || a.createdAt) - (b.unlockAt || b.createdAt);
   });
 
-  if (!currentUser) {
+  if (!isAppReady) {
     return (
-      <div className="min-h-screen bg-black relative">
-        <StarBackground />
-        <AuthScreen onLogin={handleLogin} />
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="animate-pulse flex flex-col items-center gap-4">
+          <RefreshCw className="text-purple-500 animate-spin" size={32} />
+          <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.5em]">Synchronizing</span>
+        </div>
       </div>
     );
   }
 
-  // Show onboarding if the user hasn't completed it
-  if (!currentUser.hasOnboarded) {
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-black relative">
+        <StarBackground />
+        <AuthScreen onLogin={(s) => setSession(s)} />
+      </div>
+    );
+  }
+
+  if (currentUser && !currentUser.hasOnboarded) {
     return (
       <div className="min-h-screen bg-black relative">
         <StarBackground />
@@ -298,6 +470,23 @@ const App: React.FC = () => {
           <h1 className="text-3xl font-black text-white brand-glow tracking-tighter">TheD.</h1>
           <StarSystem progress={stats.completedToday} thresholds={stats.thresholds} />
         </header>
+
+        {dbError && (
+          <div className="mx-5 mt-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 animate-in fade-in slide-in-from-top-4">
+            <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={16} />
+            <div className="flex-1">
+              <p className="text-[10px] font-black text-red-500 uppercase tracking-widest leading-relaxed">
+                {dbError}
+              </p>
+              <button 
+                onClick={() => handleSessionUser(session.user)}
+                className="mt-2 text-[8px] font-black text-white/60 hover:text-white uppercase tracking-widest flex items-center gap-1"
+              >
+                <RefreshCw size={10} /> Retry Sync
+              </button>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 px-5 pt-8">
           {activeScreen === 'home' && (
@@ -385,7 +574,7 @@ const App: React.FC = () => {
                           </div>
                           <h4 className={`text-base font-black truncate text-white tracking-tight ${isComp ? 'line-through text-slate-700' : ''}`}>{task.title}</h4>
                         </div>
-                        <button onClick={() => setTasks(tasks.filter(t => t.id !== task.id))} className="p-3 text-slate-800 hover:text-red-600 active:scale-90 transition-all"><Trash2 size={18} /></button>
+                        <button onClick={() => deleteTask(task.id)} className="p-3 text-slate-800 hover:text-red-600 active:scale-90 transition-all"><Trash2 size={18} /></button>
                       </div>
                     );
                   })}
@@ -394,7 +583,7 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {activeScreen === 'profile' && (
+          {activeScreen === 'profile' && currentUser && (
             <div className="space-y-12 screen-fade-in pt-6">
               <div className="flex flex-col items-center space-y-5">
                 <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_40px_rgba(168,85,247,0.2)]">
@@ -421,7 +610,6 @@ const App: React.FC = () => {
                 <RechargeWidget title="Zenith" value={stats.totalStars} max={100} colorClass="purple" labels={['0', '50', '100']} icon={Zap} />
               </div>
               
-              {/* Profile Settings Menu - Updated to match image design */}
               <div className="liquid-glass rounded-[3.5rem] overflow-hidden border border-white/5 shadow-2xl">
                 <button className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-colors group">
                   <span className="text-base font-black text-white uppercase tracking-wider">Setting</span>
