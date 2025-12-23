@@ -588,7 +588,7 @@ const App: React.FC = () => {
                       >
                         <button 
                           onClick={() => toggleTask(task.id)}
-                          disabled={isLocked}
+                          disabled={!!isLocked}
                           className={`w-14 h-14 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
                             isComp ? 'bg-orange-500 border-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 
                             isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5'
