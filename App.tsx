@@ -472,7 +472,7 @@ const App: React.FC = () => {
       {isLoading && <ActionLoading progress={loadingProgress} />}
       
       <div className="relative z-10 w-full flex flex-col min-h-screen">
-        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center border-b border-purple-500/10">
+        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center border-b border-purple-500/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           <h1 className="text-3xl font-black text-white brand-glow tracking-tighter">TheD.</h1>
           <StarSystem progress={stats.completedToday} thresholds={stats.thresholds} />
         </header>
@@ -500,72 +500,82 @@ const App: React.FC = () => {
               <TaskTicker tasks={tasks} />
 
               {nextReminder && (
-                <div className="liquid-glass p-5 rounded-[2.5rem] flex items-center gap-4 border border-orange-500/20 animate-pulse">
-                  <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center">
-                    <Bell className="text-orange-500" size={20} />
+                <div className="liquid-glass p-5 rounded-[2.5rem] flex items-center gap-4 border border-orange-500/20 shadow-[0_0_30px_rgba(249,115,22,0.05)] animate-in fade-in slide-in-from-bottom-2 duration-700">
+                  <div className="w-14 h-14 rounded-full bg-orange-500/10 flex items-center justify-center shrink-0">
+                    <Bell className="text-orange-500 animate-bounce" size={24} />
                   </div>
-                  <div>
-                    <h3 className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Next Ritual</h3>
-                    <p className="text-sm font-bold text-white truncate max-w-[200px]">{nextReminder.title}</p>
-                    <p className="text-[10px] font-black text-slate-500 uppercase mt-0.5">In {formatTimeLeft((nextReminder.unlockAt || 0) - currentTime)}</p>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.3em] mb-0.5">Upcoming Ritual</h3>
+                    <p className="text-sm font-black text-white truncate">{nextReminder.title}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                       <Clock size={10} className="text-slate-500" />
+                       <p className="text-[10px] font-black text-slate-500 uppercase">In {formatTimeLeft((nextReminder.unlockAt || 0) - currentTime)}</p>
+                    </div>
                   </div>
                 </div>
               )}
               
-              <div className="liquid-glass p-6 rounded-[2.5rem] space-y-6 border border-white/5 shadow-2xl">
-                <div className="flex gap-2">
+              <div className="liquid-glass p-6 rounded-[2.5rem] space-y-6 border border-white/5 shadow-2xl relative overflow-hidden group">
+                <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                <div className="flex gap-2 relative z-10">
                   <input 
                     type="text" 
                     value={newTaskTitle}
                     onChange={(e) => setNewTaskTitle(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addManualTask()}
-                    placeholder="Capture objective..."
+                    placeholder="New Objective..."
                     className="flex-1 bg-white/5 border-none rounded-2xl px-5 py-4 text-sm focus:ring-1 focus:ring-purple-500/50 outline-none font-bold text-white placeholder:text-slate-700"
                   />
                   <button onClick={addManualTask} className="button-liquid p-4 rounded-2xl">
                     <Plus size={20} className="text-white" strokeWidth={3} />
                   </button>
                 </div>
-                <div className="flex items-center justify-between px-2">
+                <div className="flex items-center justify-between px-2 relative z-10">
                   <div className="relative flex w-40 p-1 rounded-full bg-black/40 border border-white/5">
                     <div 
-                      className={`absolute top-1 bottom-1 rounded-full transition-all duration-300 ease-out bg-purple-600`}
+                      className={`absolute top-1 bottom-1 rounded-full transition-all duration-300 ease-out bg-purple-600 shadow-[0_0_15px_rgba(124,58,237,0.4)]`}
                       style={{ width: 'calc(50% - 4px)', left: isDailyToggle ? 'calc(50% + 2px)' : '2px' }}
                     />
-                    <button onClick={() => setIsDailyToggle(false)} className={`relative z-10 w-1/2 py-1.5 text-[9px] font-black uppercase tracking-widest ${!isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Once</button>
-                    <button onClick={() => setIsDailyToggle(true)} className={`relative z-10 w-1/2 py-1.5 text-[9px] font-black uppercase tracking-widest ${isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Daily</button>
+                    <button onClick={() => setIsDailyToggle(false)} className={`relative z-10 w-1/2 py-2 text-[10px] font-black uppercase tracking-widest ${!isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Once</button>
+                    <button onClick={() => setIsDailyToggle(true)} className={`relative z-10 w-1/2 py-2 text-[10px] font-black uppercase tracking-widest ${isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Daily</button>
                   </div>
-                  <button onClick={handleAIBoost} className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform">
-                    <Sparkles size={12} /> AI Boost
+                  <button onClick={handleAIBoost} className="text-[10px] font-black text-orange-500 uppercase tracking-[0.25em] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform">
+                    <Sparkles size={14} className="fill-orange-500/20" /> AI Boost
                   </button>
                 </div>
               </div>
 
-              <div className="liquid-glass p-6 rounded-[2.5rem] border-l-4 border-l-orange-500 flex items-center justify-between shadow-xl">
-                <div>
+              <div className="liquid-glass p-6 rounded-[2.5rem] border-l-4 border-l-orange-500 flex items-center justify-between shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-[50px] -mr-16 -mt-16 pointer-events-none" />
+                <div className="relative z-10">
                   <h2 className={`text-xl font-black uppercase tracking-tight ${isCycleLocked ? 'text-slate-500' : 'text-orange-500'}`}>
                     12H Flow
                   </h2>
-                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mt-1">
-                    {isCycleLocked ? `Cycle Active: ${formatTimeLeft(cycleTimeLeft)}` : 'Initiate Sequence'}
+                  <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mt-1">
+                    {isCycleLocked ? `Sequence Active: ${formatTimeLeft(cycleTimeLeft)}` : 'Ready for Initiation'}
                   </p>
                 </div>
                 <button 
                   onClick={start12HourCycle} 
                   disabled={isCycleLocked} 
-                  className={`px-8 py-3.5 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-700 shadow-inner' : 'button-liquid text-white'}`}
+                  className={`relative z-10 px-8 py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-700 shadow-inner' : 'button-liquid text-white'}`}
                 >
-                  {isCycleLocked ? <Lock size={14} /> : 'Start'}
+                  {isCycleLocked ? <Lock size={16} /> : 'Start Flow'}
                 </button>
               </div>
 
               <div className="space-y-4">
-                <h3 className="text-[10px] font-black text-slate-600 tracking-[0.3em] uppercase px-3">Protocol Queue</h3>
+                <div className="flex justify-between items-center px-4">
+                   <h3 className="text-[10px] font-black text-slate-600 tracking-[0.35em] uppercase">Protocol Queue</h3>
+                   <span className="text-[9px] font-black text-purple-500/40 uppercase tracking-widest">{tasks.length} Nodes</span>
+                </div>
                 <div className="space-y-4">
                   {sortedTasks.length === 0 && (
-                    <div className="py-20 text-center liquid-glass rounded-[2.5rem] border-dashed border-white/5">
-                      <Clock size={40} className="mx-auto text-slate-900 mb-4 opacity-30" />
-                      <p className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Queue Empty</p>
+                    <div className="py-24 text-center liquid-glass rounded-[2.5rem] border-dashed border-white/5 flex flex-col items-center">
+                      <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-6">
+                        <Clock size={32} className="text-slate-800" />
+                      </div>
+                      <p className="text-[11px] font-black text-slate-800 uppercase tracking-[0.4em]">Awaiting Commands</p>
                     </div>
                   )}
                   {sortedTasks.map(task => {
@@ -574,28 +584,28 @@ const App: React.FC = () => {
                     return (
                       <div 
                         key={task.id}
-                        className={`task-card flex items-center gap-5 p-5 rounded-[2rem] border transition-all duration-500 ${isComp ? 'opacity-25 grayscale' : ''} ${task.isPersonal ? 'border-purple-500/20 bg-purple-900/5 shadow-[0_4px_20px_rgba(168,85,247,0.05)]' : 'border-white/5'}`}
+                        className={`task-card flex items-center gap-5 p-5 rounded-[2.2rem] border transition-all duration-700 ${isComp ? 'opacity-20 grayscale scale-[0.98]' : 'hover:scale-[1.01] hover:border-white/10'} ${task.isPersonal ? 'border-purple-500/20 bg-purple-900/5 shadow-[0_4px_30px_rgba(168,85,247,0.04)]' : 'border-white/5'}`}
                       >
                         <button 
                           onClick={() => toggleTask(task.id)}
                           disabled={isLocked}
-                          className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
-                            isComp ? 'bg-orange-500 border-orange-500 text-white' : 
-                            isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5 hover:border-purple-500/50'
+                          className={`w-14 h-14 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
+                            isComp ? 'bg-orange-500 border-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 
+                            isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5'
                           }`}
                         >
-                          {isComp ? <CheckCircle size={22} strokeWidth={3} /> : isLocked ? <Lock size={18} /> : null}
+                          {isComp ? <CheckCircle size={26} strokeWidth={3} /> : isLocked ? <Lock size={20} /> : <div className="w-2 h-2 rounded-full bg-white/20" />}
                         </button>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${task.isPersonal ? 'bg-purple-600 text-white' : 'bg-white/5 text-slate-600 uppercase'}`}>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg ${task.isPersonal ? 'bg-purple-600 text-white' : 'bg-white/10 text-slate-500 uppercase tracking-widest'}`}>
                               {task.timeSlot}
                             </span>
-                            {task.isDaily && <span className="text-[8px] font-black text-orange-400 uppercase tracking-widest flex items-center gap-1"><Repeat size={8}/> Daily</span>}
+                            {task.isDaily && <span className="text-[9px] font-black text-orange-400/80 uppercase tracking-widest flex items-center gap-1.5 bg-orange-500/5 px-2 py-1 rounded-lg"><Repeat size={10}/> Daily</span>}
                           </div>
-                          <h4 className={`text-base font-black truncate text-white tracking-tight transition-all ${isComp ? 'line-through text-slate-700' : ''}`}>{task.title}</h4>
+                          <h4 className={`text-base font-black truncate text-white tracking-tight transition-all ${isComp ? 'line-through text-slate-800' : ''}`}>{task.title}</h4>
                         </div>
-                        <button onClick={() => deleteTask(task.id)} className="p-3 text-slate-800 hover:text-red-500 active:scale-90 transition-all"><Trash2 size={18} /></button>
+                        <button onClick={() => deleteTask(task.id)} className="p-4 text-slate-800 hover:text-red-500 hover:bg-red-500/5 rounded-full transition-all shrink-0"><Trash2 size={20} /></button>
                       </div>
                     );
                   })}
@@ -605,44 +615,49 @@ const App: React.FC = () => {
           )}
 
           {activeScreen === 'profile' && currentUser && (
-            <div className="space-y-12 screen-fade-in pt-6">
-              <div className="flex flex-col items-center space-y-5">
-                <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_50px_rgba(168,85,247,0.3)]">
-                  <div className="w-full h-full bg-black rounded-full flex items-center justify-center border border-white/5 overflow-hidden">
-                    <UserCircle size={70} className="text-white/10" />
+            <div className="space-y-12 screen-fade-in pt-10">
+              <div className="flex flex-col items-center space-y-6">
+                <div className="relative group">
+                  <div className="absolute inset-0 bg-gradient-to-tr from-purple-600 to-orange-500 blur-[30px] opacity-30 group-hover:opacity-60 transition-opacity rounded-full" />
+                  <div className="relative w-32 h-32 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_60px_rgba(168,85,247,0.3)]">
+                    <div className="w-full h-full bg-black rounded-full flex items-center justify-center border border-white/10 overflow-hidden relative">
+                       <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+                       <UserCircle size={80} className="text-white/10" />
+                    </div>
                   </div>
                 </div>
                 <div className="text-center">
-                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter truncate max-w-[300px]">
+                  <h2 className="text-3xl font-black text-white uppercase tracking-tighter truncate max-w-[300px] mb-2">
                     {currentUser.name || currentUser.email.split('@')[0]}
                   </h2>
-                  <div className="flex gap-2 justify-center mt-2">
+                  <div className="flex gap-2 justify-center mt-3">
                     {currentUser.profiles?.map(p => (
-                      <span key={p} className="text-[8px] font-black bg-purple-500/10 px-3 py-1.5 rounded-full text-purple-400 uppercase tracking-widest border border-purple-500/20">
+                      <span key={p} className="text-[10px] font-black bg-purple-500/10 px-4 py-2 rounded-full text-purple-400 uppercase tracking-[0.2em] border border-purple-500/20 shadow-[0_0_15px_rgba(168,85,247,0.1)]">
                         {p}
                       </span>
                     ))}
                   </div>
-                  <p className="text-[9px] text-slate-600 font-black uppercase tracking-[0.4em] mt-4">Node Hash: {currentUser.id.slice(0, 8)}</p>
+                  <p className="text-[10px] text-slate-600 font-black uppercase tracking-[0.5em] mt-6 opacity-60">System ID: {currentUser.id.slice(0, 12)}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-6">
-                <RechargeWidget title="Streak" value={stats.streak} max={30} colorClass="orange" labels={['0', '15', '30']} icon={Flame} />
-                <RechargeWidget title="Zenith" value={stats.totalStars} max={100} colorClass="purple" labels={['0', '50', '100']} icon={Zap} />
+
+              <div className="grid grid-cols-2 gap-8">
+                <RechargeWidget title="Active Streak" value={stats.streak} max={30} colorClass="orange" labels={['0', '15', '30']} icon={Flame} />
+                <RechargeWidget title="Flow Power" value={stats.totalStars} max={100} colorClass="purple" labels={['0', '50', '100']} icon={Zap} />
               </div>
               
-              <div className="liquid-glass rounded-[3.5rem] overflow-hidden border border-white/5 shadow-2xl">
-                <button className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-colors group">
-                  <span className="text-base font-black text-white uppercase tracking-wider">Interface Prefs</span>
-                  <Settings size={22} className="text-slate-800 group-hover:text-slate-400 transition-colors" />
+              <div className="liquid-glass rounded-[3.5rem] overflow-hidden border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+                <button className="w-full flex items-center justify-between p-10 hover:bg-white/5 transition-all group">
+                  <span className="text-lg font-black text-white/90 uppercase tracking-widest">Protocol Prefs</span>
+                  <Settings size={24} className="text-slate-800 group-hover:text-purple-500 transition-colors" />
                 </button>
-                <div className="mx-8 h-px bg-white/5" />
+                <div className="mx-10 h-px bg-white/5" />
                 <button 
                   onClick={handleLogout}
-                  className="w-full flex items-center justify-between p-8 hover:bg-white/10 transition-colors group"
+                  className="w-full flex items-center justify-between p-10 hover:bg-red-500/5 transition-all group"
                 >
-                  <span className="text-base font-black text-red-500 uppercase tracking-wider">Terminate Session</span>
-                  <LogOut size={22} className="text-red-900 group-hover:text-red-500 transition-colors" />
+                  <span className="text-lg font-black text-red-500 uppercase tracking-widest">Kill Session</span>
+                  <LogOut size={24} className="text-red-900 group-hover:text-red-500 transition-colors" />
                 </button>
               </div>
             </div>
