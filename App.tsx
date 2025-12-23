@@ -125,8 +125,8 @@ const App: React.FC = () => {
           stars: profile.stars || 0,
           streak: profile.streak || 0,
           totalStars: profile.total_stars || 0,
-          completed_today: profile.completed_today || 0,
-          current_day_timestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
+          completedToday: profile.completed_today || 0,
+          currentDayTimestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
           lastCycleTimestamp: profile.last_cycle_timestamp || 0,
           thresholds: profile.thresholds || generateRandomThresholds()
         });
@@ -186,7 +186,7 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Day rollover logic - only watch the timestamp
+  // Day rollover logic - focus on stable dependencies
   useEffect(() => {
     if (!currentUser || !isAppReady || stats.currentDayTimestamp === 0) return;
     
@@ -194,7 +194,6 @@ const App: React.FC = () => {
     if (stats.currentDayTimestamp !== today) {
       const resetTasks = async () => {
         try {
-          // Reset daily tasks to PENDING and remove completed non-daily ones
           const updatedTasks = tasks
             .map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
             .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
