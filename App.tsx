@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw, Bell, Download, Share } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, CheckCircle, Trash2, Repeat, Lock, UserCircle, Flame, Zap, LogOut, Timer, X } from 'lucide-react';
 import { Task, TaskStatus, UserStats, User } from './types';
-import { generateRoutineTasks, generateSingleTask } from './services/geminiService';
+import { generateRoutineTasks } from './services/geminiService';
 import { StarSystem } from './components/StarSystem';
 import { StarBackground } from './components/StarBackground';
 import { Navbar, ScreenID } from './components/Navbar';
 import { AuthScreen } from './components/AuthScreen';
-import { OnboardingScreen } from './components/OnboardingScreen';
-import { TaskTicker } from './components/TaskTicker';
 import { supabase } from './services/supabase';
 
 const HOUR_IN_MS = 60 * 60 * 1000;
@@ -19,6 +17,13 @@ const generateRandomThresholds = () => {
     nums.add(Math.floor(Math.random() * 8) + 2);
   }
   return Array.from(nums).sort((a, b) => a - b);
+};
+
+const formatTimeLeft = (ms: number) => {
+  const h = Math.floor(ms / HOUR_IN_MS);
+  const m = Math.floor((ms % HOUR_IN_MS) / (60 * 1000));
+  const s = Math.floor((ms % (60 * 1000)) / 1000);
+  return `${h}h ${m}m ${s}s`;
 };
 
 const ActionLoading = ({ progress }: { progress: number }) => (
@@ -78,139 +83,227 @@ const App: React.FC = () => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isDailyToggle, setIsDailyToggle] = useState(false);
+  const [isTimerPanelOpen, setIsTimerPanelOpen] = useState(false);
+  const [customTimerIndex, setCustomTimerIndex] = useState(0); 
 
-  // PWA Installation State
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isIOS, setIsIOS] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
+  const rulerRef = useRef<HTMLDivElement>(null);
+  const lastHapticValue = useRef(0);
 
-  useEffect(() => {
-    // Check if already installed
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setIsStandalone(true);
-    }
+  const cycleTimeLeft = Math.max(0, (stats.lastCycleTimestamp + TWELVE_HOURS_MS) - currentTime);
+  const isCycleLocked = cycleTimeLeft > 0;
 
-    // Listen for install prompt
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    });
-
-    // Detect iOS
-    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-    setIsIOS(isIOSDevice);
-  }, []);
-
-  const installPWA = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setDeferredPrompt(null);
-      setIsStandalone(true);
+  const getTimerDetails = (index: number) => {
+    if (index < 60) {
+      return { value: index + 1, unit: 'm', label: 'MIN', isHrs: false, totalMins: index + 1 };
+    } else {
+      const hrs = index - 60 + 2;
+      return { value: hrs, unit: 'h', label: 'HRS', isHrs: true, totalMins: hrs * 60 };
     }
   };
 
-  const syncStats = useCallback(async (s: UserStats, userId: string) => {
+  const timerDetails = getTimerDetails(customTimerIndex);
+
+  const syncStats = useCallback(async (newStats: UserStats, userId: string) => {
     try {
-      await supabase.from('profiles').upsert({
-        id: userId,
-        stars: s.stars,
-        streak: s.streak,
-        total_stars: s.totalStars,
-        completed_today: s.completedToday,
-        current_day_timestamp: s.currentDayTimestamp,
-        last_cycle_timestamp: s.lastCycleTimestamp,
-        thresholds: s.thresholds
-      });
-    } catch (e) {
-      console.error("Sync failure:", e);
-    }
-  }, []);
-
-  const handleSessionUser = useCallback(async (user: any) => {
-    setDbError(null);
-    try {
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError && profileError.code !== 'PGRST116') {
-        setDbError(`DB Protocol Failure: ${profileError.message}`);
-        return;
-      }
-
-      const userData: User = {
-        email: user.email!,
-        id: user.id,
-        lastLogin: Date.now(),
-        hasOnboarded: !!profile?.has_onboarded,
-        name: profile?.name,
-        profiles: profile?.profiles_list
-      };
-      
-      setCurrentUser(userData);
-
-      if (profile) {
-        setStats({
-          stars: profile.stars || 0,
-          streak: profile.streak || 0,
-          totalStars: profile.total_stars || 0,
-          completedToday: profile.completed_today || 0,
-          currentDayTimestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
-          lastCycleTimestamp: profile.last_cycle_timestamp || 0,
-          thresholds: profile.thresholds || generateRandomThresholds()
-        });
-      }
-
-      const { data: userTasks, error: taskError } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', user.id);
-
-      if (taskError) {
-        console.warn("Task recovery skipped:", taskError.message);
-      } else if (userTasks) {
-        setTasks(userTasks.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description,
-          timeSlot: t.time_slot,
-          status: t.status,
-          isRoutine: t.is_routine,
-          isPersonal: t.is_personal,
-          isDaily: t.is_daily,
-          createdAt: new Date(t.created_at).getTime(),
-          unlockAt: t.unlock_at ? new Date(t.unlock_at).getTime() : undefined
-        })));
-      }
-      setIsAppReady(true);
-    } catch (e: any) {
-      setDbError(`Critical System Exception: ${e.message}`);
-    }
+      await supabase.from('profiles').update({
+        stars: newStats.stars,
+        streak: newStats.streak,
+        total_stars: newStats.totalStars,
+        completed_today: newStats.completedToday,
+        current_day_timestamp: newStats.currentDayTimestamp,
+        last_cycle_timestamp: newStats.lastCycleTimestamp,
+        thresholds: newStats.thresholds
+      }).eq('id', userId);
+    } catch (e) { console.error(e); }
   }, []);
 
   useEffect(() => {
-    const initSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
-      if (session?.user) await handleSessionUser(session.user);
-      else setIsAppReady(true);
+    const handlePopState = (e: PopStateEvent) => {
+      if (isTimerPanelOpen) {
+        setIsTimerPanelOpen(false);
+        e.preventDefault();
+      }
     };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isTimerPanelOpen]);
 
-    initSession();
+  const handleTimerScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const ruler = e.currentTarget;
+    const center = ruler.scrollLeft + (ruler.offsetWidth / 2);
+    const marks = ruler.children;
+    let closestIdx = 0;
+    let minDistance = Infinity;
 
+    for (let i = 0; i < marks.length; i++) {
+      const mark = marks[i] as HTMLElement;
+      const distance = Math.abs(center - (mark.offsetLeft + (mark.offsetWidth / 2)));
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIdx = i;
+      }
+    }
+
+    if (closestIdx !== customTimerIndex) {
+      setCustomTimerIndex(closestIdx);
+      if ((closestIdx + 1) % 5 === 0 && closestIdx !== lastHapticValue.current) {
+        if ('vibrate' in navigator) navigator.vibrate(10);
+        lastHapticValue.current = closestIdx;
+      }
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (rulerRef.current) {
+      rulerRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
+  const addManualTask = async (forcedTimerMins?: number) => {
+    if (!currentUser) return;
+    
+    // 1. Determine the duration
+    let duration = 0;
+    if (forcedTimerMins !== undefined) {
+      duration = forcedTimerMins;
+    } else if (isTimerPanelOpen) {
+      duration = timerDetails.totalMins;
+    }
+
+    // 2. Determine the title
+    const finalTitle = newTaskTitle.trim() || (duration > 0 ? "Timed Protocol" : "Sequence");
+
+    try {
+      const task: Task = {
+        id: `manual-${Date.now()}`,
+        title: finalTitle,
+        description: isDailyToggle ? 'Daily Protocol' : 'Mission Objective',
+        timeSlot: 'Now',
+        status: TaskStatus.PENDING,
+        isRoutine: false,
+        isPersonal: true,
+        isDaily: isDailyToggle,
+        createdAt: Date.now(),
+        timerMinutes: duration > 0 ? duration : undefined,
+        timerStartedAt: duration > 0 ? Date.now() : undefined
+      };
+      
+      const { data, error } = await supabase.from('tasks').insert({
+        user_id: currentUser.id, 
+        title: task.title, 
+        description: task.description, 
+        time_slot: task.timeSlot,
+        status: task.status, 
+        is_routine: task.isRoutine, 
+        is_personal: task.isPersonal, 
+        is_daily: task.isDaily,
+        timer_minutes: task.timerMinutes, 
+        timer_started_at: task.timerStartedAt ? new Date(task.timerStartedAt).toISOString() : null
+      }).select().single();
+
+      if (!error && data) {
+        setTasks(prev => [{ ...task, id: data.id }, ...prev]);
+        setNewTaskTitle('');
+        if (isTimerPanelOpen) {
+          setIsTimerPanelOpen(false);
+          if (window.history.state?.panel === 'timer') {
+            window.history.back();
+          }
+        }
+      } else if (error) {
+        setDbError(error.message);
+      }
+    } catch (e: any) { 
+      setDbError(e.message); 
+    }
+  };
+
+  const toggleTask = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task || !currentUser) return;
+    const newStatus = task.status === TaskStatus.COMPLETED ? TaskStatus.PENDING : TaskStatus.COMPLETED;
+    try {
+      await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
+      const inc = newStatus === TaskStatus.COMPLETED ? 1 : -1;
+      const newStats = { ...stats, completedToday: Math.max(0, stats.completedToday + inc), totalStars: stats.totalStars + (newStatus === TaskStatus.COMPLETED ? 1 : 0) };
+      setStats(newStats);
+      syncStats(newStats, currentUser.id);
+    } catch (e: any) { setDbError(e.message); }
+  };
+
+  const deleteTask = async (id: string) => {
+    await supabase.from('tasks').delete().eq('id', id);
+    setTasks(tasks.filter(t => t.id !== id));
+  };
+
+  const start12HourCycle = async () => {
+    if (isCycleLocked || !currentUser) return;
+    setIsLoading(true);
+    setLoadingProgress(0);
+    const routineData = await generateRoutineTasks();
+    const startTime = Date.now();
+    const newTasks: Task[] = routineData.map((d, i) => ({
+      id: `routine-${Date.now()}-${i}`, title: d.title, description: d.description,
+      timeSlot: new Date(startTime + (i+1)*HOUR_IN_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: TaskStatus.PENDING, isRoutine: true, isPersonal: false, isDaily: false,
+      createdAt: Date.now(), unlockAt: startTime + (i+1)*HOUR_IN_MS
+    }));
+    await supabase.from('tasks').insert(newTasks.map(t => ({
+      user_id: currentUser.id, title: t.title, description: t.description, time_slot: t.timeSlot,
+      status: t.status, is_routine: t.isRoutine, is_personal: t.isPersonal, is_daily: t.isDaily,
+      unlock_at: new Date(t.unlockAt!).toISOString()
+    })));
+    setTasks(prev => [...prev.filter(t => !t.isRoutine), ...newTasks]);
+    const updatedStats = { ...stats, lastCycleTimestamp: startTime };
+    setStats(updatedStats);
+    syncStats(updatedStats, currentUser.id);
+    setIsLoading(false);
+  };
+
+  const handleLogout = async () => {
+    try { await supabase.auth.signOut(); } catch (e: any) { setDbError(e.message); }
+  };
+
+  const handleSessionUser = useCallback(async (user: any) => {
+    try {
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      const userData: User = {
+        email: user.email!, id: user.id, lastLogin: Date.now(),
+        hasOnboarded: !!profile?.has_onboarded, name: profile?.name, profiles: profile?.profiles_list
+      };
+      setCurrentUser(userData);
+      if (profile) {
+        setStats({
+          stars: profile.stars || 0, streak: profile.streak || 0, totalStars: profile.total_stars || 0,
+          completedToday: profile.completed_today || 0, currentDayTimestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
+          lastCycleTimestamp: profile.last_cycle_timestamp || 0, thresholds: profile.thresholds || generateRandomThresholds()
+        });
+      }
+      const { data: userTasks } = await supabase.from('tasks').select('*').eq('user_id', user.id);
+      if (userTasks) {
+        setTasks(userTasks.map((t: any) => ({
+          id: t.id, title: t.title, description: t.description, timeSlot: t.time_slot,
+          status: t.status, isRoutine: t.is_routine, isPersonal: t.is_personal, isDaily: t.is_daily,
+          createdAt: new Date(t.created_at).getTime(), unlockAt: t.unlock_at ? new Date(t.unlock_at).getTime() : undefined,
+          timerMinutes: t.timer_minutes, timerStartedAt: t.timer_started_at ? new Date(t.timer_started_at).getTime() : undefined
+        })));
+      }
+      setIsAppReady(true);
+    } catch (e: any) { setDbError(e.message); }
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session?.user) handleSessionUser(session.user);
+      else setIsAppReady(true);
+    });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) handleSessionUser(session.user);
-      else {
-        setCurrentUser(null);
-        setIsAppReady(true);
-      }
+      else { setCurrentUser(null); setIsAppReady(true); }
     });
-
     return () => subscription.unsubscribe();
   }, [handleSessionUser]);
 
@@ -219,517 +312,223 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!currentUser || !isAppReady || stats.currentDayTimestamp === 0) return;
+  const finalTasks = (() => {
+    const active: Task[] = [];
+    const completed: Task[] = [];
+    const expired: Task[] = [];
     
-    const today = new Date().setHours(0, 0, 0, 0);
-    if (stats.currentDayTimestamp !== today) {
-      const resetTasks = async () => {
-        try {
-          const updatedTasks = tasks
-            .map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
-            .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
-          
-          await supabase.from('tasks').delete().eq('user_id', currentUser.id).neq('is_daily', true).eq('status', TaskStatus.COMPLETED);
-          await supabase.from('tasks').update({ status: TaskStatus.PENDING }).eq('user_id', currentUser.id).eq('is_daily', true);
+    const routine = tasks.filter(t => t.isRoutine && t.status !== TaskStatus.COMPLETED);
+    const windowIds = new Set([
+      ...routine.filter(t => t.unlockAt && currentTime >= t.unlockAt).map(t => t.id),
+      ...routine.filter(t => t.unlockAt && currentTime < t.unlockAt).sort((a,b) => a.unlockAt! - b.unlockAt!).slice(0, 3).map(t => t.id)
+    ]);
 
-          setTasks(updatedTasks);
-          const newStats = {
-            ...stats,
-            completedToday: 0,
-            currentDayTimestamp: today,
-            thresholds: generateRandomThresholds(),
-            streak: stats.completedToday > 0 ? stats.streak + 1 : 0
-          };
-          setStats(newStats);
-          syncStats(newStats, currentUser.id);
-        } catch (e) {
-          console.error("Rollover failure:", e);
-        }
-      };
-      resetTasks();
-    }
-  }, [stats.currentDayTimestamp, currentUser, isAppReady, syncStats]);
-
-  const handleOnboardingComplete = async (name: string, profiles: string[]) => {
-    if (currentUser) {
-      setIsLoading(true);
-      try {
-        const today = new Date().setHours(0, 0, 0, 0);
-        const { error } = await supabase.from('profiles').upsert({
-          id: currentUser.id,
-          name,
-          profiles_list: profiles,
-          has_onboarded: true,
-          current_day_timestamp: today
-        });
-        if (!error) {
-          setCurrentUser({ ...currentUser, name, profiles, hasOnboarded: true });
-          setStats(prev => ({ ...prev, currentDayTimestamp: today }));
-        } else {
-          setDbError(`Identity Sync Failed: ${error.message}`);
-        }
-      } catch (e: any) {
-        setDbError(e.message);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setCurrentUser(null);
-    setSession(null);
-    setActiveScreen('home');
-    setDbError(null);
-  };
-
-  const cycleTimeLeft = Math.max(0, (stats.lastCycleTimestamp + TWELVE_HOURS_MS) - currentTime);
-  const isCycleLocked = cycleTimeLeft > 0;
-
-  const formatTimeLeft = (ms: number) => {
-    const h = Math.floor(ms / HOUR_IN_MS);
-    const m = Math.floor((ms % HOUR_IN_MS) / (60 * 1000));
-    const s = Math.floor((ms % (60 * 1000)) / 1000);
-    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const simulateLoading = async (finalAction: () => Promise<void>) => {
-    setIsLoading(true);
-    setLoadingProgress(0);
-    for (let i = 0; i <= 20; i++) {
-      setLoadingProgress(Math.floor((i / 20) * 100));
-      await new Promise(r => setTimeout(r, 40));
-    }
-    await finalAction();
-    setIsLoading(false);
-  };
-
-  const start12HourCycle = async () => {
-    if (isCycleLocked || !currentUser) return;
-    await simulateLoading(async () => {
-      try {
-        const routineData = await generateRoutineTasks();
-        const startTime = Date.now();
-        const newRoutineTasks: Task[] = routineData.map((data, index) => ({
-          id: `routine-${Date.now()}-${index}`,
-          title: data.title,
-          description: data.description,
-          timeSlot: new Date(startTime + (index + 1) * HOUR_IN_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          status: TaskStatus.PENDING,
-          isRoutine: true,
-          isPersonal: false,
-          isDaily: false,
-          createdAt: Date.now(),
-          unlockAt: startTime + (index + 1) * HOUR_IN_MS
-        }));
-
-        const dbTasks = newRoutineTasks.map(t => ({
-          user_id: currentUser.id,
-          title: t.title,
-          description: t.description,
-          time_slot: t.timeSlot,
-          status: t.status,
-          is_routine: t.isRoutine,
-          is_personal: t.isPersonal,
-          is_daily: t.isDaily,
-          unlock_at: t.unlockAt ? new Date(t.unlockAt).toISOString() : null
-        }));
-        
-        const { error } = await supabase.from('tasks').insert(dbTasks);
-        if (error) throw error;
-
-        setTasks(prev => [...prev.filter(t => !t.isRoutine), ...newRoutineTasks]);
-        const updatedStats = { ...stats, lastCycleTimestamp: startTime };
-        setStats(updatedStats);
-        syncStats(updatedStats, currentUser.id);
-      } catch (e: any) { 
-        setDbError(`Cycle Initiation Failed: ${e.message}`);
-      }
+    tasks.forEach(t => {
+      const isComp = t.status === TaskStatus.COMPLETED;
+      const isExp = t.isRoutine && !isComp && t.unlockAt && (currentTime - t.unlockAt > HOUR_IN_MS * 3);
+      if (isComp) completed.push(t);
+      else if (isExp) expired.push(t);
+      else if (!t.isRoutine || windowIds.has(t.id)) active.push(t);
     });
-  };
 
-  const handleAIBoost = async () => {
-    if (!currentUser) return;
-    await simulateLoading(async () => {
-      try {
-        const data = await generateSingleTask();
-        const task: Task = {
-          id: `ai-${Date.now()}`,
-          title: data.title,
-          description: data.description,
-          timeSlot: 'Now',
-          status: TaskStatus.PENDING,
-          isRoutine: false,
-          isPersonal: true,
-          isDaily: false,
-          createdAt: Date.now()
-        };
-
-        const { error } = await supabase.from('tasks').insert({
-          user_id: currentUser.id,
-          title: task.title,
-          description: task.description,
-          time_slot: task.timeSlot,
-          status: task.status,
-          is_routine: task.isRoutine,
-          is_personal: task.isPersonal,
-          is_daily: task.isDaily
-        });
-        if (error) throw error;
-
-        setTasks(prev => [task, ...prev]);
-      } catch (e: any) { 
-        setDbError(`AI Boost Offline: ${e.message}`);
-      }
-    });
-  };
-
-  const addManualTask = async () => {
-    if (!newTaskTitle.trim() || !currentUser) return;
-    try {
-      const task: Task = {
-        id: `manual-${Date.now()}`,
-        title: newTaskTitle,
-        description: isDailyToggle ? 'Daily Routine' : 'One-time Objective',
-        timeSlot: 'Now',
-        status: TaskStatus.PENDING,
-        isRoutine: false,
-        isPersonal: true,
-        isDaily: isDailyToggle,
-        createdAt: Date.now()
-      };
-
-      const { data, error } = await supabase.from('tasks').insert({
-        user_id: currentUser.id,
-        title: task.title,
-        description: task.description,
-        time_slot: task.timeSlot,
-        status: task.status,
-        is_routine: task.isRoutine,
-        is_personal: task.isPersonal,
-        is_daily: task.isDaily
-      }).select().single();
-
-      if (error) throw error;
-
-      if (data) {
-        setTasks([{ ...task, id: data.id }, ...tasks]);
-        setNewTaskTitle('');
-      }
-    } catch (e: any) {
-      setDbError(`Input Error: ${e.message}`);
-    }
-  };
-
-  const toggleTask = async (id: string) => {
-    const task = tasks.find(t => t.id === id);
-    if (!task || !currentUser) return;
-    if (task.isRoutine && task.unlockAt && currentTime < task.unlockAt - 1000) return;
-
-    const newStatus = task.status === TaskStatus.COMPLETED ? TaskStatus.PENDING : TaskStatus.COMPLETED;
-    const completing = newStatus === TaskStatus.COMPLETED;
-
-    try {
-      const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
-      if (error) throw error;
+    active.sort((a,b) => {
+      const aIsTimed = !!(a.timerMinutes && a.timerStartedAt && a.status !== TaskStatus.COMPLETED);
+      const bIsTimed = !!(b.timerMinutes && b.timerStartedAt && b.status !== TaskStatus.COMPLETED);
       
-      setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
-      const newStats = { 
-        ...stats, 
-        completedToday: completing ? stats.completedToday + 1 : Math.max(0, stats.completedToday - 1),
-        totalStars: completing ? stats.totalStars + 1 : stats.totalStars
-      };
-      setStats(newStats);
-      syncStats(newStats, currentUser.id);
-    } catch (e: any) {
-      setDbError(`Sync Error: ${e.message}`);
-    }
-  };
+      if (aIsTimed && !bIsTimed) return -1;
+      if (!aIsTimed && bIsTimed) return 1;
+      if (a.isPersonal && !b.isPersonal) return -1;
+      if (!a.isPersonal && b.isPersonal) return 1;
+      return (a.unlockAt || a.createdAt) - (b.unlockAt || b.createdAt);
+    });
 
-  const deleteTask = async (id: string) => {
-    try {
-      const { error } = await supabase.from('tasks').delete().eq('id', id);
-      if (error) throw error;
-      setTasks(tasks.filter(t => t.id !== id));
-    } catch (e: any) {
-      setDbError(`Delete Error: ${e.message}`);
-    }
-  };
+    completed.sort((a,b) => (a.isPersonal && !b.isPersonal ? -1 : (b.isPersonal && !a.isPersonal ? 1 : b.createdAt - a.createdAt)));
+    
+    return [...active, ...completed, ...expired];
+  })();
 
-  const sortedTasks = [...tasks].sort((a, b) => {
-    const aComp = a.status === TaskStatus.COMPLETED;
-    const bComp = b.status === TaskStatus.COMPLETED;
-    if (aComp !== bComp) return aComp ? 1 : -1;
-    return (a.unlockAt || a.createdAt) - (b.unlockAt || b.createdAt);
-  });
-
-  const nextReminder = tasks
-    .filter(t => t.status === TaskStatus.PENDING && t.unlockAt && t.unlockAt > currentTime)
-    .sort((a, b) => (a.unlockAt || 0) - (b.unlockAt || 0))[0];
-
-  if (!isAppReady) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="animate-pulse flex flex-col items-center gap-4">
-          <RefreshCw className="text-purple-500 animate-spin" size={32} />
-          <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.5em]">Synchronizing</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!session) {
-    return (
-      <div className="min-h-screen bg-black relative">
-        <StarBackground />
-        <AuthScreen onLogin={(s) => setSession(s)} />
-      </div>
-    );
-  }
-
-  if (currentUser && !currentUser.hasOnboarded) {
-    return (
-      <div className="min-h-screen bg-black relative">
-        <StarBackground />
-        <OnboardingScreen onComplete={handleOnboardingComplete} />
-      </div>
-    );
-  }
+  if (!isAppReady) return <div className="min-h-screen bg-black flex items-center justify-center font-black uppercase text-white/10 tracking-[0.5em] animate-pulse">Syncing...</div>;
 
   return (
     <div className="flex flex-col min-h-screen pb-32 relative overflow-hidden">
       <StarBackground />
       {isLoading && <ActionLoading progress={loadingProgress} />}
       
+      {isTimerPanelOpen && (
+        <div 
+          className="fixed inset-0 z-[400] bg-black/70 backdrop-blur-[6px] animate-in fade-in duration-300" 
+          onClick={() => { setIsTimerPanelOpen(false); window.history.back(); }}
+        />
+      )}
+
+      {isTimerPanelOpen && (
+        <div className="floating-timer-pill" onClick={(e) => e.stopPropagation()}>
+          <div className="ruler-section">
+            <div 
+              ref={rulerRef}
+              onScroll={handleTimerScroll}
+              onWheel={handleWheel}
+              className="ruler-viewport hide-scrollbar"
+            >
+              {Array.from({ length: 71 }).map((_, i) => {
+                const details = getTimerDetails(i);
+                const isTenStep = (i + 1) % 10 === 0 || i === 0 || i === 59 || i >= 60;
+                return (
+                  <div key={i} className="ruler-mark-wrap">
+                    <div className={`ruler-label ${i === customTimerIndex ? (details.isHrs ? 'active-purple' : 'active') : ''} ${isTenStep ? 'opacity-100' : 'opacity-0'}`}>
+                      {details.value}
+                    </div>
+                    <div 
+                      className={`ruler-bar ${ i <= customTimerIndex ? (details.isHrs ? 'active-purple' : 'active-orange') : '' }`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="timer-bottom-row">
+            <div className="flex flex-col items-center">
+              <span className={`text-[9px] font-black uppercase tracking-widest mb-1 transition-all ${!timerDetails.isHrs ? 'text-orange-500' : 'text-white/10'}`}>MIN</span>
+              <div className="timer-value-display text-white">
+                {timerDetails.value}
+                <span className={`text-lg ml-0.5 transition-colors ${!timerDetails.isHrs ? 'text-orange-500' : 'text-purple-500'}`}>{timerDetails.unit}</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => addManualTask()} 
+              className="timer-center-btn active:scale-90 shadow-2xl flex items-center justify-center"
+              style={{ borderColor: timerDetails.isHrs ? 'rgba(168, 85, 247, 0.4)' : 'rgba(249, 115, 22, 0.4)' }}
+            >
+              <div className="inner-square" style={{ background: timerDetails.isHrs ? '#a855f7' : '#f97316' }} />
+            </button>
+
+            <div className="flex flex-col items-center">
+              <span className={`text-[9px] font-black uppercase tracking-widest mb-1 transition-all ${timerDetails.isHrs ? 'text-purple-500' : 'text-white/10'}`}>HRS</span>
+              <div className="timer-label-side" style={{ color: timerDetails.isHrs ? '#a855f7' : 'rgba(255,255,255,0.05)' }}>
+                {timerDetails.isHrs ? 'ZENITH' : 'FLOW'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="relative z-10 w-full flex flex-col min-h-screen">
-        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center border-b border-purple-500/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center border-b border-purple-500/10">
           <h1 className="text-3xl font-black text-white brand-glow tracking-tighter">TheD.</h1>
           <StarSystem progress={stats.completedToday} thresholds={stats.thresholds} />
         </header>
 
-        {dbError && (
-          <div className="mx-5 mt-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 animate-in fade-in slide-in-from-top-4">
-            <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={16} />
-            <div className="flex-1">
-              <p className="text-[10px] font-black text-red-500 uppercase tracking-widest leading-relaxed">
-                {dbError}
-              </p>
-              <button 
-                onClick={() => handleSessionUser(session.user)}
-                className="mt-2 text-[8px] font-black text-white/60 hover:text-white uppercase tracking-widest flex items-center gap-1"
-              >
-                <RefreshCw size={10} /> Retry Sync
-              </button>
-            </div>
-          </div>
-        )}
-
-        <main className="flex-1 px-5 pt-8">
-          {activeScreen === 'home' && (
-            <div className="space-y-8 screen-fade-in">
-              <TaskTicker tasks={tasks} />
-
-              {nextReminder && (
-                <div className="liquid-glass p-5 rounded-[2.5rem] flex items-center gap-4 border border-orange-500/20 shadow-[0_0_30px_rgba(249,115,22,0.05)] animate-in fade-in slide-in-from-bottom-2 duration-700">
-                  <div className="w-14 h-14 rounded-full bg-orange-500/10 flex items-center justify-center shrink-0">
-                    <Bell className="text-orange-500 animate-bounce" size={24} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.3em] mb-0.5">Upcoming Ritual</h3>
-                    <p className="text-sm font-black text-white truncate">{nextReminder.title}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                       <Clock size={10} className="text-slate-500" />
-                       <p className="text-[10px] font-black text-slate-500 uppercase">In {formatTimeLeft((nextReminder.unlockAt || 0) - currentTime)}</p>
-                    </div>
+        <main className="flex-1 px-5 pt-4">
+          {!session ? <AuthScreen onLogin={setSession} /> : (activeScreen === 'home' && (
+            <div className="space-y-6 screen-fade-in relative">
+              <div className="liquid-glass p-7 rounded-[3.5rem] space-y-6 border border-white/10 shadow-3xl">
+                <div className="flex justify-center">
+                  <div className="relative flex w-full max-w-[320px] p-2 rounded-full bg-black/60 border border-white/5 shadow-2xl">
+                    <div 
+                      className="absolute top-2 bottom-2 rounded-full transition-all duration-500 bg-purple-600 shadow-[0_0_20px_rgba(124,58,237,0.6)]"
+                      style={{ width: 'calc(50% - 8px)', left: isDailyToggle ? 'calc(50% + 4px)' : '4px' }}
+                    />
+                    <button onClick={() => setIsDailyToggle(false)} className={`relative z-10 w-1/2 py-3.5 text-[11px] font-black uppercase tracking-[0.4em] transition-colors ${!isDailyToggle ? 'text-white' : 'text-slate-700'}`}>Once</button>
+                    <button onClick={() => setIsDailyToggle(true)} className={`relative z-10 w-1/2 py-3.5 text-[11px] font-black uppercase tracking-[0.4em] transition-colors ${isDailyToggle ? 'text-white' : 'text-slate-700'}`}>Daily</button>
                   </div>
                 </div>
-              )}
-              
-              <div className="liquid-glass p-6 rounded-[2.5rem] space-y-6 border border-white/5 shadow-2xl relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                <div className="flex gap-2 relative z-10">
+
+                <div className="flex gap-4 items-center">
                   <input 
-                    type="text" 
-                    value={newTaskTitle}
+                    type="text" value={newTaskTitle}
                     onChange={(e) => setNewTaskTitle(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addManualTask()}
-                    placeholder="New Objective..."
-                    className="flex-1 bg-white/5 border-none rounded-2xl px-5 py-4 text-sm focus:ring-1 focus:ring-purple-500/50 outline-none font-bold text-white placeholder:text-slate-700"
+                    placeholder="Enter Sequence..."
+                    className="flex-1 bg-white/5 border-none rounded-[2rem] px-8 py-5 text-base focus:ring-2 focus:ring-purple-500/30 outline-none font-bold text-white placeholder:text-white/10 shadow-inner"
                   />
-                  <button onClick={addManualTask} className="button-liquid p-4 rounded-2xl">
-                    <Plus size={20} className="text-white" strokeWidth={3} />
+                  <button onClick={() => addManualTask()} className="button-liquid w-16 h-16 rounded-[2rem] flex items-center justify-center shrink-0">
+                    <Plus size={30} className="text-white" strokeWidth={4} />
                   </button>
                 </div>
-                <div className="flex items-center justify-between px-2 relative z-10">
-                  <div className="relative flex w-40 p-1 rounded-full bg-black/40 border border-white/5">
-                    <div 
-                      className={`absolute top-1 bottom-1 rounded-full transition-all duration-300 ease-out bg-purple-600 shadow-[0_0_15px_rgba(124,58,237,0.4)]`}
-                      style={{ width: 'calc(50% - 4px)', left: isDailyToggle ? 'calc(50% + 2px)' : '2px' }}
-                    />
-                    <button onClick={() => setIsDailyToggle(false)} className={`relative z-10 w-1/2 py-2 text-[10px] font-black uppercase tracking-widest ${!isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Once</button>
-                    <button onClick={() => setIsDailyToggle(true)} className={`relative z-10 w-1/2 py-2 text-[10px] font-black uppercase tracking-widest ${isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Daily</button>
-                  </div>
-                  <button onClick={handleAIBoost} className="text-[10px] font-black text-orange-500 uppercase tracking-[0.25em] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform">
-                    <Sparkles size={14} className="fill-orange-500/20" /> AI Boost
-                  </button>
+
+                <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar pt-1">
+                   {[5, 10, 15].map(m => (
+                     <button 
+                      key={m} 
+                      onClick={() => addManualTask(m)} 
+                      className="px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shrink-0 bg-white/5 text-slate-500 active:bg-orange-600 active:text-white active:scale-95"
+                    >
+                       {m}M
+                     </button>
+                   ))}
+                   <button 
+                    onClick={() => { setIsTimerPanelOpen(true); window.history.pushState({panel:'timer'}, ''); }} 
+                    className="w-14 h-14 flex items-center justify-center rounded-2xl bg-purple-600/20 text-purple-400 hover:bg-purple-600/40 border border-purple-500/20 shrink-0 transition-all active:scale-90"
+                   >
+                     <Plus size={22} strokeWidth={3} />
+                   </button>
                 </div>
               </div>
 
-              <div className="liquid-glass p-6 rounded-[2.5rem] border-l-4 border-l-orange-500 flex items-center justify-between shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-[50px] -mr-16 -mt-16 pointer-events-none" />
+              <div className="liquid-glass p-7 rounded-[2.8rem] border-l-4 border-l-orange-500 flex items-center justify-between shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-[50px] -mr-16 -mt-16" />
                 <div className="relative z-10">
-                  <h2 className={`text-xl font-black uppercase tracking-tight ${isCycleLocked ? 'text-slate-500' : 'text-orange-500'}`}>
-                    12H Flow
-                  </h2>
-                  <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mt-1">
-                    {isCycleLocked ? `Sequence Active: ${formatTimeLeft(cycleTimeLeft)}` : 'Ready for Initiation'}
+                  <h2 className={`text-xl font-black uppercase tracking-tight ${isCycleLocked ? 'text-slate-600' : 'text-orange-500'}`}>12H Flow</h2>
+                  <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest mt-1">
+                    {isCycleLocked ? `Cycle Locked: ${formatTimeLeft(cycleTimeLeft)}` : 'Handshake Ready'}
                   </p>
                 </div>
                 <button 
-                  onClick={start12HourCycle} 
-                  disabled={isCycleLocked} 
-                  className={`relative z-10 px-8 py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-700 shadow-inner' : 'button-liquid text-white'}`}
+                  onClick={start12HourCycle} disabled={isCycleLocked} 
+                  className={`relative z-10 px-8 py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-800' : 'button-liquid text-white'}`}
                 >
-                  {isCycleLocked ? <Lock size={16} /> : 'Start Flow'}
+                  {isCycleLocked ? <Lock size={16} /> : 'Initiate'}
                 </button>
               </div>
 
-              <div className="space-y-4">
-                <div className="flex justify-between items-center px-4">
-                   <h3 className="text-[10px] font-black text-slate-600 tracking-[0.35em] uppercase">Protocol Queue</h3>
-                   <span className="text-[9px] font-black text-purple-500/40 uppercase tracking-widest">{tasks.length} Nodes</span>
-                </div>
-                <div className="space-y-4">
-                  {sortedTasks.length === 0 && (
-                    <div className="py-24 text-center liquid-glass rounded-[2.5rem] border-dashed border-white/5 flex flex-col items-center">
-                      <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-6">
-                        <Clock size={32} className="text-slate-800" />
-                      </div>
-                      <p className="text-[11px] font-black text-slate-800 uppercase tracking-[0.4em]">Awaiting Commands</p>
-                    </div>
-                  )}
-                  {sortedTasks.map(task => {
-                    const isComp = task.status === TaskStatus.COMPLETED;
-                    const isLocked = task.isRoutine && task.unlockAt && currentTime < task.unlockAt - 1000;
-                    return (
-                      <div 
-                        key={task.id}
-                        className={`task-card flex items-center gap-5 p-5 rounded-[2.2rem] border transition-all duration-700 ${isComp ? 'opacity-20 grayscale scale-[0.98]' : 'hover:scale-[1.01] hover:border-white/10'} ${task.isPersonal ? 'border-purple-500/20 bg-purple-900/5 shadow-[0_4px_30px_rgba(168,85,247,0.04)]' : 'border-white/5'}`}
-                      >
-                        <button 
-                          onClick={() => toggleTask(task.id)}
-                          disabled={isLocked}
-                          className={`w-14 h-14 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
-                            isComp ? 'bg-orange-500 border-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 
-                            isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5'
-                          }`}
-                        >
-                          {isComp ? <CheckCircle size={26} strokeWidth={3} /> : isLocked ? <Lock size={20} /> : <div className="w-2 h-2 rounded-full bg-white/20" />}
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg ${task.isPersonal ? 'bg-purple-600 text-white' : 'bg-white/10 text-slate-500 uppercase tracking-widest'}`}>
-                              {task.timeSlot}
-                            </span>
-                            {task.isDaily && <span className="text-[9px] font-black text-orange-400/80 uppercase tracking-widest flex items-center gap-1.5 bg-orange-500/5 px-2 py-1 rounded-lg"><Repeat size={10}/> Daily</span>}
-                          </div>
-                          <h4 className={`text-base font-black truncate text-white tracking-tight transition-all ${isComp ? 'line-through text-slate-800' : ''}`}>{task.title}</h4>
+              <div className="space-y-4 pb-32">
+                {finalTasks.map(t => {
+                  const isComp = t.status === TaskStatus.COMPLETED;
+                  const isLocked = t.isRoutine && t.unlockAt && currentTime < t.unlockAt;
+                  const isExp = t.isRoutine && !isComp && t.unlockAt && (currentTime - t.unlockAt > HOUR_IN_MS * 3);
+                  let timerStr = "";
+                  if (t.timerMinutes && t.timerStartedAt && !isComp) {
+                    const rem = Math.max(0, (t.timerMinutes * 60000) - (currentTime - t.timerStartedAt));
+                    timerStr = `${Math.floor(rem/60000)}:${Math.floor((rem%60000)/1000).toString().padStart(2,'0')}`;
+                  }
+                  return (
+                    <div key={t.id} className={`task-card flex items-center gap-5 p-5 rounded-[2.2rem] ${t.isPersonal ? 'task-card-glow-purple border-purple-500/20' : ''} ${isComp ? 'opacity-20 scale-[0.97]' : 'hover:scale-[1.01]'} ${isExp ? 'opacity-5 saturate-0' : ''}`}>
+                      <button onClick={() => toggleTask(t.id)} disabled={isLocked || isExp} className={`w-14 h-14 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${isComp ? 'bg-orange-500 border-orange-500 text-white shadow-orange-500/20 shadow-xl' : (isLocked ? 'border-white/5 text-slate-900' : 'border-white/15 bg-white/5')}`}>
+                        {isComp ? <CheckCircle size={26} strokeWidth={3} /> : (isLocked ? <Lock size={20} /> : <div className="w-2 h-2 rounded-full bg-white/20" />)}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg ${t.isPersonal ? 'bg-purple-600 text-white' : 'bg-white/10 text-slate-500 uppercase tracking-widest'}`}>{t.timeSlot}</span>
+                          {t.isDaily && <span className="text-[9px] font-black text-orange-400/80 uppercase tracking-widest flex items-center gap-1.5 bg-orange-500/5 px-2 py-1 rounded-lg"><Repeat size={10}/> Daily</span>}
+                          {timerStr && <span className="text-[9px] font-black text-white bg-red-600/60 px-2.5 py-1 rounded-lg flex items-center gap-1.5 animate-pulse"><Timer size={10}/> {timerStr}</span>}
                         </div>
-                        <button onClick={() => deleteTask(task.id)} className="p-4 text-slate-800 hover:text-red-500 hover:bg-red-500/5 rounded-full transition-all shrink-0"><Trash2 size={20} /></button>
+                        <h4 className={`text-base font-black truncate text-white tracking-tight ${isComp ? 'line-through text-slate-800' : ''}`}>{t.title}</h4>
                       </div>
-                    );
-                  })}
-                </div>
+                      <button onClick={() => deleteTask(t.id)} className="p-4 text-slate-800 hover:text-red-500 transition-all"><Trash2 size={20} /></button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          )}
-
+          ))}
           {activeScreen === 'profile' && currentUser && (
-            <div className="space-y-12 screen-fade-in pt-10">
-              <div className="flex flex-col items-center space-y-6">
-                <div className="relative group">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-purple-600 to-orange-500 blur-[30px] opacity-30 group-hover:opacity-60 transition-opacity rounded-full" />
-                  <div className="relative w-32 h-32 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_60px_rgba(168,85,247,0.3)]">
-                    <div className="w-full h-full bg-black rounded-full flex items-center justify-center border border-white/10 overflow-hidden relative">
-                       <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
-                       <UserCircle size={80} className="text-white/10" />
-                    </div>
-                  </div>
-                </div>
-                <div className="text-center">
-                  <h2 className="text-3xl font-black text-white uppercase tracking-tighter truncate max-w-[300px] mb-2">
-                    {currentUser.name || currentUser.email.split('@')[0]}
-                  </h2>
-                  <div className="flex gap-2 justify-center mt-3">
-                    {currentUser.profiles?.map(p => (
-                      <span key={p} className="text-[10px] font-black bg-purple-500/10 px-4 py-2 rounded-full text-purple-400 uppercase tracking-[0.2em] border border-purple-500/20 shadow-[0_0_15px_rgba(168,85,247,0.1)]">
-                        {p}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {!isStandalone && (
-                <div className="liquid-glass p-8 rounded-[3.5rem] border border-orange-500/20 shadow-2xl space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500">
-                      <Download size={22} />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Install App</h3>
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Native Protocol Access</p>
-                    </div>
-                  </div>
-                  
-                  {isIOS ? (
-                    <div className="bg-white/5 p-4 rounded-2xl flex items-center gap-3">
-                      <Share size={18} className="text-purple-500" />
-                      <p className="text-[9px] font-black text-white/60 uppercase leading-relaxed tracking-widest">
-                        Tap <span className="text-white">Share</span> then <span className="text-white">"Add to Home Screen"</span> for native experience.
-                      </p>
-                    </div>
-                  ) : (
-                    <button 
-                      onClick={installPWA}
-                      disabled={!deferredPrompt}
-                      className={`w-full py-5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] transition-all flex items-center justify-center gap-3 ${deferredPrompt ? 'button-liquid text-white' : 'bg-white/5 text-slate-700 shadow-inner'}`}
-                    >
-                      {deferredPrompt ? (
-                        <>
-                          <Download size={16} strokeWidth={3} />
-                          Initialize Install
-                        </>
-                      ) : (
-                        "Ready for Install"
-                      )}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-8">
-                <RechargeWidget title="Active Streak" value={stats.streak} max={30} colorClass="orange" labels={['0', '15', '30']} icon={Flame} />
-                <RechargeWidget title="Flow Power" value={stats.totalStars} max={100} colorClass="purple" labels={['0', '50', '100']} icon={Zap} />
-              </div>
-              
-              <div className="liquid-glass rounded-[3.5rem] overflow-hidden border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
-                <button className="w-full flex items-center justify-between p-10 hover:bg-white/5 transition-all group">
-                  <span className="text-lg font-black text-white/90 uppercase tracking-widest">Protocol Prefs</span>
-                  <Settings size={24} className="text-slate-800 group-hover:text-purple-500 transition-colors" />
-                </button>
-                <div className="mx-10 h-px bg-white/5" />
-                <button 
-                  onClick={handleLogout}
-                  className="w-full flex items-center justify-between p-10 hover:bg-red-500/5 transition-all group"
-                >
-                  <span className="text-lg font-black text-red-500 uppercase tracking-widest">Kill Session</span>
-                  <LogOut size={24} className="text-red-900 group-hover:text-red-500 transition-colors" />
-                </button>
-              </div>
-            </div>
+             <div className="space-y-12 screen-fade-in pt-10 pb-32">
+               <div className="flex flex-col items-center space-y-6">
+                 <div className="relative w-32 h-32 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-2xl">
+                   <div className="w-full h-full bg-black rounded-full flex items-center justify-center border border-white/10 overflow-hidden relative shadow-inner"><UserCircle size={80} className="text-white/10" /></div>
+                 </div>
+                 <h2 className="text-3xl font-black text-white uppercase tracking-tighter brand-glow">{currentUser.name || "Protocol User"}</h2>
+               </div>
+               <div className="grid grid-cols-2 gap-8">
+                 <RechargeWidget title="Streak" value={stats.streak} max={30} colorClass="orange" labels={['0', '15', '30']} icon={Flame} />
+                 <RechargeWidget title="Flow" value={stats.totalStars} max={100} colorClass="purple" labels={['0', '50', '100']} icon={Zap} />
+               </div>
+               <button onClick={handleLogout} className="w-full liquid-glass p-10 rounded-[3rem] text-lg font-black text-red-500 uppercase tracking-widest hover:bg-red-500/5 transition-all flex justify-between items-center group">
+                 Kill Session <LogOut size={24} className="group-hover:translate-x-1 transition-transform" />
+               </button>
+             </div>
           )}
         </main>
         <Navbar activeScreen={activeScreen} setActiveScreen={setActiveScreen} />

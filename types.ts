@@ -16,6 +16,8 @@ export interface Task {
   isDaily: boolean;
   createdAt: number;
   unlockAt?: number;
+  timerMinutes?: number; // Total duration in minutes
+  timerStartedAt?: number; // Timestamp when the timer was initiated
 }
 
 export interface User {
