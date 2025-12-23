@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw, Bell } from 'lucide-react';
+import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw, Bell, Download, Share } from 'lucide-react';
 import { Task, TaskStatus, UserStats, User } from './types';
 import { generateRoutineTasks, generateSingleTask } from './services/geminiService';
 import { StarSystem } from './components/StarSystem';
@@ -78,6 +78,38 @@ const App: React.FC = () => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isDailyToggle, setIsDailyToggle] = useState(false);
+
+  // PWA Installation State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsStandalone(true);
+    }
+
+    // Listen for install prompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    });
+
+    // Detect iOS
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    setIsIOS(isIOSDevice);
+  }, []);
+
+  const installPWA = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+    }
+  };
 
   const syncStats = useCallback(async (s: UserStats, userId: string) => {
     try {
@@ -588,7 +620,7 @@ const App: React.FC = () => {
                       >
                         <button 
                           onClick={() => toggleTask(task.id)}
-                          disabled={!!isLocked}
+                          disabled={isLocked}
                           className={`w-14 h-14 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
                             isComp ? 'bg-orange-500 border-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.4)]' : 
                             isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5'
@@ -637,9 +669,46 @@ const App: React.FC = () => {
                       </span>
                     ))}
                   </div>
-                  <p className="text-[10px] text-slate-600 font-black uppercase tracking-[0.5em] mt-6 opacity-60">System ID: {currentUser.id.slice(0, 12)}</p>
                 </div>
               </div>
+
+              {!isStandalone && (
+                <div className="liquid-glass p-8 rounded-[3.5rem] border border-orange-500/20 shadow-2xl space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500">
+                      <Download size={22} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-widest">Install App</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Native Protocol Access</p>
+                    </div>
+                  </div>
+                  
+                  {isIOS ? (
+                    <div className="bg-white/5 p-4 rounded-2xl flex items-center gap-3">
+                      <Share size={18} className="text-purple-500" />
+                      <p className="text-[9px] font-black text-white/60 uppercase leading-relaxed tracking-widest">
+                        Tap <span className="text-white">Share</span> then <span className="text-white">"Add to Home Screen"</span> for native experience.
+                      </p>
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={installPWA}
+                      disabled={!deferredPrompt}
+                      className={`w-full py-5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] transition-all flex items-center justify-center gap-3 ${deferredPrompt ? 'button-liquid text-white' : 'bg-white/5 text-slate-700 shadow-inner'}`}
+                    >
+                      {deferredPrompt ? (
+                        <>
+                          <Download size={16} strokeWidth={3} />
+                          Initialize Install
+                        </>
+                      ) : (
+                        "Ready for Install"
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-8">
                 <RechargeWidget title="Active Streak" value={stats.streak} max={30} colorClass="orange" labels={['0', '15', '30']} icon={Flame} />
