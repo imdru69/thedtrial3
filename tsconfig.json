@@ -1,4 +1,3 @@
-
 {
   "compilerOptions": {
     "target": "ESNext",
@@ -11,14 +10,18 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "*": ["*"]
+    }
   },
   "include": [
-    "./index.tsx",
-    "./App.tsx",
-    "./types.ts",
-    "./vite-env.d.ts",
-    "./services/**/*.ts",
-    "./components/**/*.tsx"
+    "index.tsx",
+    "App.tsx",
+    "types.ts",
+    "vite-env.d.ts",
+    "services/**/*.ts",
+    "components/**/*.tsx"
   ]
 }

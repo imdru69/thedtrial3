@@ -10,6 +10,15 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+declare namespace NodeJS {
+  interface ProcessEnv {
+    API_KEY: string;
+  }
+}
+
+// Fix: Removed the redundant 'declare var process' as it may conflict with existing block-scoped declarations
+// in the environment. The NodeJS.ProcessEnv augmentation above ensures process.env is correctly typed.
+
 declare module "*.svg" {
   const content: any;
   export default content;
