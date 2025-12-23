@@ -68,7 +68,7 @@ const App: React.FC = () => {
     streak: 0,
     totalStars: 0,
     completedToday: 0,
-    currentDayTimestamp: new Date().setHours(0, 0, 0, 0),
+    currentDayTimestamp: 0,
     lastCycleTimestamp: 0,
     thresholds: generateRandomThresholds()
   });
@@ -77,6 +77,23 @@ const App: React.FC = () => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isDailyToggle, setIsDailyToggle] = useState(false);
+
+  const syncStats = useCallback(async (s: UserStats, userId: string) => {
+    try {
+      await supabase.from('profiles').upsert({
+        id: userId,
+        stars: s.stars,
+        streak: s.streak,
+        total_stars: s.totalStars,
+        completed_today: s.completedToday,
+        current_day_timestamp: s.currentDayTimestamp,
+        last_cycle_timestamp: s.lastCycleTimestamp,
+        thresholds: s.thresholds
+      });
+    } catch (e) {
+      console.error("Sync failure:", e);
+    }
+  }, []);
 
   const handleSessionUser = useCallback(async (user: any) => {
     setDbError(null);
@@ -87,7 +104,6 @@ const App: React.FC = () => {
         .eq('id', user.id)
         .single();
 
-      // PGRST116 means no row found, which is expected for new users
       if (profileError && profileError.code !== 'PGRST116') {
         setDbError(`DB Protocol Failure: ${profileError.message}`);
         return;
@@ -109,8 +125,8 @@ const App: React.FC = () => {
           stars: profile.stars || 0,
           streak: profile.streak || 0,
           totalStars: profile.total_stars || 0,
-          completedToday: profile.completed_today || 0,
-          currentDayTimestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
+          completed_today: profile.completed_today || 0,
+          current_day_timestamp: profile.current_day_timestamp || new Date().setHours(0, 0, 0, 0),
           lastCycleTimestamp: profile.last_cycle_timestamp || 0,
           thresholds: profile.thresholds || generateRandomThresholds()
         });
@@ -170,15 +186,18 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Day rollover logic
+  // Day rollover logic - only watch the timestamp
   useEffect(() => {
-    if (!currentUser || !isAppReady) return;
+    if (!currentUser || !isAppReady || stats.currentDayTimestamp === 0) return;
+    
     const today = new Date().setHours(0, 0, 0, 0);
-    if (stats.currentDayTimestamp !== today && stats.currentDayTimestamp !== 0) {
+    if (stats.currentDayTimestamp !== today) {
       const resetTasks = async () => {
         try {
-          const updatedTasks = tasks.map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
-                               .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
+          // Reset daily tasks to PENDING and remove completed non-daily ones
+          const updatedTasks = tasks
+            .map(t => t.isDaily ? { ...t, status: TaskStatus.PENDING } : t)
+            .filter(t => t.isDaily || (t.status === TaskStatus.PENDING && !t.isRoutine));
           
           await supabase.from('tasks').delete().eq('user_id', currentUser.id).neq('is_daily', true).eq('status', TaskStatus.COMPLETED);
           await supabase.from('tasks').update({ status: TaskStatus.PENDING }).eq('user_id', currentUser.id).eq('is_daily', true);
@@ -192,46 +211,30 @@ const App: React.FC = () => {
             streak: stats.completedToday > 0 ? stats.streak + 1 : 0
           };
           setStats(newStats);
-          syncStats(newStats);
+          syncStats(newStats, currentUser.id);
         } catch (e) {
           console.error("Rollover failure:", e);
         }
       };
       resetTasks();
     }
-  }, [stats.currentDayTimestamp, currentUser, isAppReady, tasks, stats]);
-
-  const syncStats = async (s: UserStats) => {
-    if (!currentUser) return;
-    try {
-      await supabase.from('profiles').upsert({
-        id: currentUser.id,
-        stars: s.stars,
-        streak: s.streak,
-        total_stars: s.totalStars,
-        completed_today: s.completedToday,
-        current_day_timestamp: s.currentDayTimestamp,
-        last_cycle_timestamp: s.lastCycleTimestamp,
-        thresholds: s.thresholds
-      });
-    } catch (e) {
-      console.error("Sync failure:", e);
-    }
-  };
+  }, [stats.currentDayTimestamp, currentUser, isAppReady, syncStats]);
 
   const handleOnboardingComplete = async (name: string, profiles: string[]) => {
     if (currentUser) {
       setIsLoading(true);
       try {
+        const today = new Date().setHours(0, 0, 0, 0);
         const { error } = await supabase.from('profiles').upsert({
           id: currentUser.id,
           name,
           profiles_list: profiles,
           has_onboarded: true,
-          current_day_timestamp: new Date().setHours(0, 0, 0, 0)
+          current_day_timestamp: today
         });
         if (!error) {
           setCurrentUser({ ...currentUser, name, profiles, hasOnboarded: true });
+          setStats(prev => ({ ...prev, currentDayTimestamp: today }));
         } else {
           setDbError(`Identity Sync Failed: ${error.message}`);
         }
@@ -309,7 +312,7 @@ const App: React.FC = () => {
         setTasks(prev => [...prev.filter(t => !t.isRoutine), ...newRoutineTasks]);
         const updatedStats = { ...stats, lastCycleTimestamp: startTime };
         setStats(updatedStats);
-        syncStats(updatedStats);
+        syncStats(updatedStats, currentUser.id);
       } catch (e: any) { 
         setDbError(`Cycle Initiation Failed: ${e.message}`);
       }
@@ -408,7 +411,7 @@ const App: React.FC = () => {
         totalStars: completing ? stats.totalStars + 1 : stats.totalStars
       };
       setStats(newStats);
-      syncStats(newStats);
+      syncStats(newStats, currentUser.id);
     } catch (e: any) {
       setDbError(`Sync Error: ${e.message}`);
     }
