@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Plus, CheckCircle, Clock, Trash2, Sparkles, Repeat, Lock, UserCircle, Flame, Zap, Settings, LogOut, AlertTriangle, RefreshCw, Bell } from 'lucide-react';
 import { Task, TaskStatus, UserStats, User } from './types';
 import { generateRoutineTasks, generateSingleTask } from './services/geminiService';
 import { StarSystem } from './components/StarSystem';
@@ -7,6 +7,7 @@ import { StarBackground } from './components/StarBackground';
 import { Navbar, ScreenID } from './components/Navbar';
 import { AuthScreen } from './components/AuthScreen';
 import { OnboardingScreen } from './components/OnboardingScreen';
+import { TaskTicker } from './components/TaskTicker';
 import { supabase } from './services/supabase';
 
 const HOUR_IN_MS = 60 * 60 * 1000;
@@ -186,7 +187,6 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Day rollover logic - focus on stable dependencies
   useEffect(() => {
     if (!currentUser || !isAppReady || stats.currentDayTimestamp === 0) return;
     
@@ -284,13 +284,13 @@ const App: React.FC = () => {
           id: `routine-${Date.now()}-${index}`,
           title: data.title,
           description: data.description,
-          timeSlot: new Date(startTime + index * HOUR_IN_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timeSlot: new Date(startTime + (index + 1) * HOUR_IN_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: TaskStatus.PENDING,
           isRoutine: true,
           isPersonal: false,
           isDaily: false,
           createdAt: Date.now(),
-          unlockAt: startTime + index * HOUR_IN_MS
+          unlockAt: startTime + (index + 1) * HOUR_IN_MS
         }));
 
         const dbTasks = newRoutineTasks.map(t => ({
@@ -433,6 +433,10 @@ const App: React.FC = () => {
     return (a.unlockAt || a.createdAt) - (b.unlockAt || b.createdAt);
   });
 
+  const nextReminder = tasks
+    .filter(t => t.status === TaskStatus.PENDING && t.unlockAt && t.unlockAt > currentTime)
+    .sort((a, b) => (a.unlockAt || 0) - (b.unlockAt || 0))[0];
+
   if (!isAppReady) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -468,7 +472,7 @@ const App: React.FC = () => {
       {isLoading && <ActionLoading progress={loadingProgress} />}
       
       <div className="relative z-10 w-full flex flex-col min-h-screen">
-        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center">
+        <header className="sticky top-0 z-50 liquid-glass rounded-b-[2.5rem] p-6 flex justify-between items-center border-b border-purple-500/10">
           <h1 className="text-3xl font-black text-white brand-glow tracking-tighter">TheD.</h1>
           <StarSystem progress={stats.completedToday} thresholds={stats.thresholds} />
         </header>
@@ -493,14 +497,29 @@ const App: React.FC = () => {
         <main className="flex-1 px-5 pt-8">
           {activeScreen === 'home' && (
             <div className="space-y-8 screen-fade-in">
-              <div className="liquid-glass p-6 rounded-[2.5rem] space-y-6">
+              <TaskTicker tasks={tasks} />
+
+              {nextReminder && (
+                <div className="liquid-glass p-5 rounded-[2.5rem] flex items-center gap-4 border border-orange-500/20 animate-pulse">
+                  <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <Bell className="text-orange-500" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Next Ritual</h3>
+                    <p className="text-sm font-bold text-white truncate max-w-[200px]">{nextReminder.title}</p>
+                    <p className="text-[10px] font-black text-slate-500 uppercase mt-0.5">In {formatTimeLeft((nextReminder.unlockAt || 0) - currentTime)}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="liquid-glass p-6 rounded-[2.5rem] space-y-6 border border-white/5 shadow-2xl">
                 <div className="flex gap-2">
                   <input 
                     type="text" 
                     value={newTaskTitle}
                     onChange={(e) => setNewTaskTitle(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addManualTask()}
-                    placeholder="Capture ritual..."
+                    placeholder="Capture objective..."
                     className="flex-1 bg-white/5 border-none rounded-2xl px-5 py-4 text-sm focus:ring-1 focus:ring-purple-500/50 outline-none font-bold text-white placeholder:text-slate-700"
                   />
                   <button onClick={addManualTask} className="button-liquid p-4 rounded-2xl">
@@ -516,25 +535,25 @@ const App: React.FC = () => {
                     <button onClick={() => setIsDailyToggle(false)} className={`relative z-10 w-1/2 py-1.5 text-[9px] font-black uppercase tracking-widest ${!isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Once</button>
                     <button onClick={() => setIsDailyToggle(true)} className={`relative z-10 w-1/2 py-1.5 text-[9px] font-black uppercase tracking-widest ${isDailyToggle ? 'text-white' : 'text-slate-600'}`}>Daily</button>
                   </div>
-                  <button onClick={handleAIBoost} className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <button onClick={handleAIBoost} className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] flex items-center gap-2 hover:scale-105 active:scale-95 transition-transform">
                     <Sparkles size={12} /> AI Boost
                   </button>
                 </div>
               </div>
 
-              <div className="liquid-glass p-6 rounded-[2.5rem] border-l-4 border-l-orange-500 flex items-center justify-between">
+              <div className="liquid-glass p-6 rounded-[2.5rem] border-l-4 border-l-orange-500 flex items-center justify-between shadow-xl">
                 <div>
                   <h2 className={`text-xl font-black uppercase tracking-tight ${isCycleLocked ? 'text-slate-500' : 'text-orange-500'}`}>
                     12H Flow
                   </h2>
                   <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mt-1">
-                    {isCycleLocked ? `Next sequence in ${formatTimeLeft(cycleTimeLeft)}` : 'Ready to initiate'}
+                    {isCycleLocked ? `Cycle Active: ${formatTimeLeft(cycleTimeLeft)}` : 'Initiate Sequence'}
                   </p>
                 </div>
                 <button 
                   onClick={start12HourCycle} 
                   disabled={isCycleLocked} 
-                  className={`px-8 py-3.5 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-700' : 'button-liquid text-white'}`}
+                  className={`px-8 py-3.5 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${isCycleLocked ? 'bg-white/5 text-slate-700 shadow-inner' : 'button-liquid text-white'}`}
                 >
                   {isCycleLocked ? <Lock size={14} /> : 'Start'}
                 </button>
@@ -546,7 +565,7 @@ const App: React.FC = () => {
                   {sortedTasks.length === 0 && (
                     <div className="py-20 text-center liquid-glass rounded-[2.5rem] border-dashed border-white/5">
                       <Clock size={40} className="mx-auto text-slate-900 mb-4 opacity-30" />
-                      <p className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Awaiting Command</p>
+                      <p className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Queue Empty</p>
                     </div>
                   )}
                   {sortedTasks.map(task => {
@@ -555,14 +574,14 @@ const App: React.FC = () => {
                     return (
                       <div 
                         key={task.id}
-                        className={`task-card flex items-center gap-5 p-5 rounded-[2rem] border transition-all ${isComp ? 'opacity-25' : ''} ${task.isPersonal ? 'border-purple-500/20 bg-purple-900/5' : 'border-white/5'}`}
+                        className={`task-card flex items-center gap-5 p-5 rounded-[2rem] border transition-all duration-500 ${isComp ? 'opacity-25 grayscale' : ''} ${task.isPersonal ? 'border-purple-500/20 bg-purple-900/5 shadow-[0_4px_20px_rgba(168,85,247,0.05)]' : 'border-white/5'}`}
                       >
                         <button 
                           onClick={() => toggleTask(task.id)}
                           disabled={isLocked}
                           className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all shrink-0 ${
                             isComp ? 'bg-orange-500 border-orange-500 text-white' : 
-                            isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5'
+                            isLocked ? 'border-white/5 text-slate-900' : 'border-white/10 active:border-purple-500 bg-white/5 hover:border-purple-500/50'
                           }`}
                         >
                           {isComp ? <CheckCircle size={22} strokeWidth={3} /> : isLocked ? <Lock size={18} /> : null}
@@ -574,9 +593,9 @@ const App: React.FC = () => {
                             </span>
                             {task.isDaily && <span className="text-[8px] font-black text-orange-400 uppercase tracking-widest flex items-center gap-1"><Repeat size={8}/> Daily</span>}
                           </div>
-                          <h4 className={`text-base font-black truncate text-white tracking-tight ${isComp ? 'line-through text-slate-700' : ''}`}>{task.title}</h4>
+                          <h4 className={`text-base font-black truncate text-white tracking-tight transition-all ${isComp ? 'line-through text-slate-700' : ''}`}>{task.title}</h4>
                         </div>
-                        <button onClick={() => deleteTask(task.id)} className="p-3 text-slate-800 hover:text-red-600 active:scale-90 transition-all"><Trash2 size={18} /></button>
+                        <button onClick={() => deleteTask(task.id)} className="p-3 text-slate-800 hover:text-red-500 active:scale-90 transition-all"><Trash2 size={18} /></button>
                       </div>
                     );
                   })}
@@ -588,7 +607,7 @@ const App: React.FC = () => {
           {activeScreen === 'profile' && currentUser && (
             <div className="space-y-12 screen-fade-in pt-6">
               <div className="flex flex-col items-center space-y-5">
-                <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_40px_rgba(168,85,247,0.2)]">
+                <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-purple-600 to-orange-500 p-1.5 shadow-[0_0_50px_rgba(168,85,247,0.3)]">
                   <div className="w-full h-full bg-black rounded-full flex items-center justify-center border border-white/5 overflow-hidden">
                     <UserCircle size={70} className="text-white/10" />
                   </div>
@@ -599,12 +618,12 @@ const App: React.FC = () => {
                   </h2>
                   <div className="flex gap-2 justify-center mt-2">
                     {currentUser.profiles?.map(p => (
-                      <span key={p} className="text-[8px] font-black bg-white/10 px-2 py-1 rounded-full text-white/50 uppercase tracking-widest border border-white/5">
+                      <span key={p} className="text-[8px] font-black bg-purple-500/10 px-3 py-1.5 rounded-full text-purple-400 uppercase tracking-widest border border-purple-500/20">
                         {p}
                       </span>
                     ))}
                   </div>
-                  <p className="text-[9px] text-slate-600 font-black uppercase tracking-[0.4em] mt-3">Verified Node: {currentUser.email}</p>
+                  <p className="text-[9px] text-slate-600 font-black uppercase tracking-[0.4em] mt-4">Node Hash: {currentUser.id.slice(0, 8)}</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-6">
@@ -614,7 +633,7 @@ const App: React.FC = () => {
               
               <div className="liquid-glass rounded-[3.5rem] overflow-hidden border border-white/5 shadow-2xl">
                 <button className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-colors group">
-                  <span className="text-base font-black text-white uppercase tracking-wider">Setting</span>
+                  <span className="text-base font-black text-white uppercase tracking-wider">Interface Prefs</span>
                   <Settings size={22} className="text-slate-800 group-hover:text-slate-400 transition-colors" />
                 </button>
                 <div className="mx-8 h-px bg-white/5" />
@@ -622,7 +641,7 @@ const App: React.FC = () => {
                   onClick={handleLogout}
                   className="w-full flex items-center justify-between p-8 hover:bg-white/10 transition-colors group"
                 >
-                  <span className="text-base font-black text-red-500 uppercase tracking-wider">Logout</span>
+                  <span className="text-base font-black text-red-500 uppercase tracking-wider">Terminate Session</span>
                   <LogOut size={22} className="text-red-900 group-hover:text-red-500 transition-colors" />
                 </button>
               </div>
