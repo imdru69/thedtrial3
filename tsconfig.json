@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "node10",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": [
+    "./index.tsx",
+    "./App.tsx",
+    "./types.ts",
+    "./vite-env.d.ts",
+    "./services/**/*.ts",
+    "./components/**/*.tsx"
+  ]
+}
